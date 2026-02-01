@@ -6,6 +6,7 @@ import { registerAttributeTools, handleAttributeTool } from '../../src/tools/att
 import { registerCalendarTools, handleCalendarTool } from '../../src/tools/calendar.js';
 import { registerSystemTools, handleSystemTool } from '../../src/tools/system.js';
 import { registerAttachmentTools, handleAttachmentTool } from '../../src/tools/attachments.js';
+import { registerRevisionTools, handleRevisionTool } from '../../src/tools/revisions.js';
 import type { TriliumClient } from '../../src/client/trilium.js';
 
 // Mock client factory
@@ -17,6 +18,9 @@ function createMockClient(overrides: Partial<TriliumClient> = {}): TriliumClient
     updateNote: vi.fn(),
     updateNoteContent: vi.fn(),
     deleteNote: vi.fn(),
+    undeleteNote: vi.fn(),
+    getNoteAttachments: vi.fn(),
+    getNoteHistory: vi.fn(),
     searchNotes: vi.fn(),
     createBranch: vi.fn(),
     getBranch: vi.fn(),
@@ -34,6 +38,9 @@ function createMockClient(overrides: Partial<TriliumClient> = {}): TriliumClient
     getInboxNote: vi.fn(),
     getAppInfo: vi.fn(),
     createRevision: vi.fn(),
+    getNoteRevisions: vi.fn(),
+    getRevision: vi.fn(),
+    getRevisionContent: vi.fn(),
     createBackup: vi.fn(),
     exportNote: vi.fn(),
     createAttachment: vi.fn(),
@@ -49,9 +56,9 @@ function createMockClient(overrides: Partial<TriliumClient> = {}): TriliumClient
 
 describe('Note Tools', () => {
   describe('registerNoteTools', () => {
-    it('should register 7 note tools', () => {
+    it('should register 10 note tools', () => {
       const tools = registerNoteTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(10);
       expect(tools.map((t) => t.name)).toEqual([
         'create_note',
         'get_note',
@@ -60,6 +67,9 @@ describe('Note Tools', () => {
         'update_note_content',
         'append_note_content',
         'delete_note',
+        'undelete_note',
+        'get_note_attachments',
+        'get_note_history',
       ]);
     });
 
@@ -2373,7 +2383,7 @@ describe('Attachment Tools', () => {
 });
 
 describe('Tool count verification', () => {
-  it('should have exactly 28 tools total', () => {
+  it('should have exactly 34 tools total', () => {
     const allTools = [
       ...registerNoteTools(),
       ...registerSearchTools(),
@@ -2382,8 +2392,9 @@ describe('Tool count verification', () => {
       ...registerCalendarTools(),
       ...registerSystemTools(),
       ...registerAttachmentTools(),
+      ...registerRevisionTools(),
     ];
-    expect(allTools).toHaveLength(28);
+    expect(allTools).toHaveLength(34);
   });
 
   it('all tools should have descriptions', () => {
@@ -2395,6 +2406,7 @@ describe('Tool count verification', () => {
       ...registerCalendarTools(),
       ...registerSystemTools(),
       ...registerAttachmentTools(),
+      ...registerRevisionTools(),
     ];
     allTools.forEach((tool) => {
       expect(tool.description).toBeDefined();
@@ -2411,6 +2423,7 @@ describe('Tool count verification', () => {
       ...registerCalendarTools(),
       ...registerSystemTools(),
       ...registerAttachmentTools(),
+      ...registerRevisionTools(),
     ];
     allTools.forEach((tool) => {
       expect(tool.inputSchema).toBeDefined();
