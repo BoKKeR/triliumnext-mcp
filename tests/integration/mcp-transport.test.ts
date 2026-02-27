@@ -71,13 +71,16 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const createContent = createResponse.content as Array<{ type: string; text: string }>;
-      const created = JSON.parse(createContent[0].text);
-      expect(created.note.title).toBe('Stdio Test Note');
+      expect(createContent[0].text).toContain('Note created successfully');
+      expect(createContent[0].text).toContain('Stdio Test Note');
+      const noteIdMatch = createContent[0].text.match(/noteId: (\w+)/);
+      expect(noteIdMatch).toBeTruthy();
+      const noteId = noteIdMatch![1];
 
       // Delete
       const deleteResponse = await client.callTool({
         name: 'delete_note',
-        arguments: { noteId: created.note.noteId },
+        arguments: { noteId },
       });
       expect(deleteResponse.content).toBeDefined();
     });
@@ -133,11 +136,13 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const createContent = createResponse.content as Array<{ type: string; text: string }>;
-      const created = JSON.parse(createContent[0].text);
-      expect(created.note.title).toBe('HTTP Test Note');
+      expect(createContent[0].text).toContain('Note created successfully');
+      expect(createContent[0].text).toContain('HTTP Test Note');
+      const noteIdMatch = createContent[0].text.match(/noteId: (\w+)/);
+      expect(noteIdMatch).toBeTruthy();
 
       // Delete
-      await client.callTool({ name: 'delete_note', arguments: { noteId: created.note.noteId } });
+      await client.callTool({ name: 'delete_note', arguments: { noteId: noteIdMatch![1] } });
     });
 
     it('should handle search_notes', async () => {
@@ -182,8 +187,9 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const noteContent = noteResponse.content as Array<{ type: string; text: string }>;
-      const note = JSON.parse(noteContent[0].text);
-      testNoteId = note.note.noteId;
+      const noteIdMatch = noteContent[0].text.match(/noteId: (\w+)/);
+      expect(noteIdMatch).toBeTruthy();
+      testNoteId = noteIdMatch![1];
 
       // Create a text attachment
       const attachResponse = await client.callTool({
@@ -229,8 +235,9 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const noteContent = noteResponse.content as Array<{ type: string; text: string }>;
-      const note = JSON.parse(noteContent[0].text);
-      testNoteId = note.note.noteId;
+      const noteIdMatch = noteContent[0].text.match(/noteId: (\w+)/);
+      expect(noteIdMatch).toBeTruthy();
+      testNoteId = noteIdMatch![1];
 
       // 1x1 PNG pixel in base64
       const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -280,8 +287,9 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const noteContent = noteResponse.content as Array<{ type: string; text: string }>;
-      const note = JSON.parse(noteContent[0].text);
-      testNoteId = note.note.noteId;
+      const noteIdMatch = noteContent[0].text.match(/noteId: (\w+)/);
+      expect(noteIdMatch).toBeTruthy();
+      testNoteId = noteIdMatch![1];
 
       // Minimal valid JPEG in base64 (1x1 red pixel)
       const jpegBase64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof';
