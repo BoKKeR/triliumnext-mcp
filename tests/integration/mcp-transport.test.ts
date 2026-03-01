@@ -203,14 +203,12 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const attachContent = attachResponse.content as Array<{ type: string; text: string }>;
-      const attachIdMatch = attachContent[0].text.match(/attachmentId: (\w+)/);
-      expect(attachIdMatch).toBeTruthy();
-      const attachmentId = attachIdMatch![1];
+      const attachment = JSON.parse(attachContent[0].text);
 
       // Get attachment content - should be text type
       const contentResponse = await client.callTool({
         name: 'get_attachment_content',
-        arguments: { attachmentId },
+        arguments: { attachmentId: attachment.attachmentId },
       });
 
       const content = contentResponse.content as Array<{ type: string; text?: string }>;
@@ -256,14 +254,12 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const attachContent = attachResponse.content as Array<{ type: string; text: string }>;
-      const attachIdMatch = attachContent[0].text.match(/attachmentId: (\w+)/);
-      expect(attachIdMatch).toBeTruthy();
-      const attachmentId = attachIdMatch![1];
+      const attachment = JSON.parse(attachContent[0].text);
 
       // Get attachment content - should be image type
       const contentResponse = await client.callTool({
         name: 'get_attachment_content',
-        arguments: { attachmentId },
+        arguments: { attachmentId: attachment.attachmentId },
       });
 
       const content = contentResponse.content as Array<{ type: string; data?: string; mimeType?: string }>;
@@ -310,14 +306,12 @@ describe('MCP Transport Integration Tests', () => {
         },
       });
       const attachContent = attachResponse.content as Array<{ type: string; text: string }>;
-      const attachIdMatch = attachContent[0].text.match(/attachmentId: (\w+)/);
-      expect(attachIdMatch).toBeTruthy();
-      const attachmentId = attachIdMatch![1];
+      const attachment = JSON.parse(attachContent[0].text);
 
       // Get attachment content - should be image type
       const contentResponse = await client.callTool({
         name: 'get_attachment_content',
-        arguments: { attachmentId },
+        arguments: { attachmentId: attachment.attachmentId },
       });
 
       const content = contentResponse.content as Array<{ type: string; data?: string; mimeType?: string }>;

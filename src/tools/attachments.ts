@@ -173,7 +173,7 @@ export async function handleAttachmentTool(
         position: parsed.position,
       });
       return {
-        content: [{ type: 'text', text: `Attachment created successfully. attachmentId: ${result.attachmentId}, title: ${result.title}` }],
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       };
     }
 
