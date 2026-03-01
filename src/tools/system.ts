@@ -3,6 +3,33 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { TriliumClient } from '../client/trilium.js';
 import { defineTool } from './schemas.js';
 import { exportFormatSchema, backupNameSchema } from './validators.js';
+import { TOOL_CATEGORIES, type ToolCategory } from './categories.js';
+import { searchTools } from './registry.js';
+
+const searchToolsSchema = z.object({
+  query: z
+    .string()
+    .min(1, 'Search query is required')
+    .describe(
+      'Search query to find tools. Supports multiple space-separated keywords (AND logic). ' +
+        'Searches tool names, descriptions, and parameter names.'
+    ),
+  category: z
+    .enum(TOOL_CATEGORIES)
+    .optional()
+    .describe('Filter results to a specific tool category'),
+  include_schemas: z
+    .boolean()
+    .optional()
+    .describe('Include full input schemas in results (default: false)'),
+  limit: z
+    .number()
+    .int()
+    .min(1, 'Limit must be at least 1')
+    .max(50, 'Limit cannot exceed 50')
+    .optional()
+    .describe('Maximum number of results to return (default: 10, max: 50)'),
+});
 
 const createRevisionSchema = z.object({
   noteId: z
@@ -44,6 +71,13 @@ export function registerSystemTools(): Tool[] {
       'export_note',
       'Export a note and its subtree as a ZIP file. Returns the export as base64-encoded data. Use format=markdown for LLM-friendly output.',
       exportNoteSchema
+    ),
+    defineTool(
+      'search_tools',
+      'Search and filter available MCP tools by keyword. Searches tool names, descriptions, and parameter names. ' +
+        'Use this to discover relevant tools when working with large tool sets. ' +
+        'Supports multi-keyword AND queries and category filtering.',
+      searchToolsSchema
     ),
   ];
 }
@@ -108,6 +142,24 @@ export async function handleSystemTool(
               null,
               2
             ),
+          },
+        ],
+      };
+    }
+
+    case 'search_tools': {
+      const parsed = searchToolsSchema.parse(args);
+      const result = searchTools(parsed.query, {
+        category: parsed.category as ToolCategory | undefined,
+        include_schemas: parsed.include_schemas,
+        limit: parsed.limit,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };

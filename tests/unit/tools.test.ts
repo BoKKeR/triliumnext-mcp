@@ -6,6 +6,7 @@ import { registerAttributeTools, handleAttributeTool } from '../../src/tools/att
 import { registerCalendarTools, handleCalendarTool } from '../../src/tools/calendar.js';
 import { registerSystemTools, handleSystemTool } from '../../src/tools/system.js';
 import { registerAttachmentTools, handleAttachmentTool } from '../../src/tools/attachments.js';
+import { registerRevisionTools, handleRevisionTool } from '../../src/tools/revisions.js';
 import type { TriliumClient } from '../../src/client/trilium.js';
 import { DiffApplicationError } from '../../src/tools/diff.js';
 
@@ -18,6 +19,9 @@ function createMockClient(overrides: Partial<TriliumClient> = {}): TriliumClient
     updateNote: vi.fn(),
     updateNoteContent: vi.fn(),
     deleteNote: vi.fn(),
+    undeleteNote: vi.fn(),
+    getNoteAttachments: vi.fn(),
+    getNoteHistory: vi.fn(),
     searchNotes: vi.fn(),
     createBranch: vi.fn(),
     getBranch: vi.fn(),
@@ -35,6 +39,9 @@ function createMockClient(overrides: Partial<TriliumClient> = {}): TriliumClient
     getInboxNote: vi.fn(),
     getAppInfo: vi.fn(),
     createRevision: vi.fn(),
+    getNoteRevisions: vi.fn(),
+    getRevision: vi.fn(),
+    getRevisionContent: vi.fn(),
     createBackup: vi.fn(),
     exportNote: vi.fn(),
     createAttachment: vi.fn(),
@@ -50,9 +57,9 @@ function createMockClient(overrides: Partial<TriliumClient> = {}): TriliumClient
 
 describe('Note Tools', () => {
   describe('registerNoteTools', () => {
-    it('should register 7 note tools', () => {
+    it('should register 10 note tools', () => {
       const tools = registerNoteTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(10);
       expect(tools.map((t) => t.name)).toEqual([
         'create_note',
         'get_note',
@@ -61,6 +68,9 @@ describe('Note Tools', () => {
         'update_note_content',
         'append_note_content',
         'delete_note',
+        'undelete_note',
+        'get_note_attachments',
+        'get_note_history',
       ]);
     });
 
@@ -2053,10 +2063,15 @@ describe('Calendar Tools', () => {
 
 describe('System Tools', () => {
   describe('registerSystemTools', () => {
-    it('should register 3 system tools', () => {
+    it('should register 4 system tools', () => {
       const tools = registerSystemTools();
-      expect(tools).toHaveLength(3);
-      expect(tools.map((t) => t.name)).toEqual(['create_revision', 'create_backup', 'export_note']);
+      expect(tools).toHaveLength(4);
+      expect(tools.map((t) => t.name)).toEqual([
+        'create_revision',
+        'create_backup',
+        'export_note',
+        'search_tools',
+      ]);
     });
 
     it('should have correct input schemas', () => {
@@ -2066,6 +2081,7 @@ describe('System Tools', () => {
       expect(toolMap['create_revision'].inputSchema.required).toEqual(['noteId']);
       expect(toolMap['create_backup'].inputSchema.required).toEqual(['backupName']);
       expect(toolMap['export_note'].inputSchema.required).toEqual(['noteId']);
+      expect(toolMap['search_tools'].inputSchema.required).toEqual(['query']);
     });
   });
 
@@ -2687,8 +2703,305 @@ describe('Attachment Tools', () => {
   });
 });
 
+describe('Tool Registry and Search', () => {
+  // We'll import the registry separately to test it
+  describe('getToolRegistry', () => {
+    it('should return all registered tools', async () => {
+      const { getToolRegistry } = await import('../../src/tools/registry.js');
+      const allTools = getToolRegistry();
+      // Should include all tools including the new search_tools
+      expect(allTools.length).toBeGreaterThanOrEqual(35);
+    });
+
+    it('should cache tools on repeated calls', async () => {
+      const { getToolRegistry } = await import('../../src/tools/registry.js');
+      const tools1 = getToolRegistry();
+      const tools2 = getToolRegistry();
+      expect(tools1).toBe(tools2); // Same reference (cached)
+    });
+  });
+
+  describe('getToolCategory', () => {
+    it('should return correct category for note tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('create_note')).toBe('notes');
+      expect(getToolCategory('get_note')).toBe('notes');
+      expect(getToolCategory('update_note_content')).toBe('notes');
+    });
+
+    it('should return correct category for search tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('search_notes')).toBe('search');
+      expect(getToolCategory('get_note_tree')).toBe('search');
+    });
+
+    it('should return correct category for organization tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('move_note')).toBe('organization');
+      expect(getToolCategory('clone_note')).toBe('organization');
+    });
+
+    it('should return correct category for attribute tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('get_attributes')).toBe('attributes');
+      expect(getToolCategory('set_attribute')).toBe('attributes');
+    });
+
+    it('should return correct category for calendar tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('get_day_note')).toBe('calendar');
+      expect(getToolCategory('get_inbox_note')).toBe('calendar');
+    });
+
+    it('should return correct category for system tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('create_backup')).toBe('system');
+      expect(getToolCategory('export_note')).toBe('system');
+      expect(getToolCategory('search_tools')).toBe('system');
+    });
+
+    it('should return correct category for attachment tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('create_attachment')).toBe('attachments');
+      expect(getToolCategory('get_attachment_content')).toBe('attachments');
+    });
+
+    it('should return correct category for revision tools', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('get_note_revisions')).toBe('revisions');
+      expect(getToolCategory('get_revision_content')).toBe('revisions');
+    });
+
+    it('should return undefined for unknown tool', async () => {
+      const { getToolCategory } = await import('../../src/tools/registry.js');
+      expect(getToolCategory('nonexistent_tool')).toBeUndefined();
+    });
+  });
+
+  describe('searchTools', () => {
+    it('should find tools by name keyword', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('note');
+
+      expect(result.total_matches).toBeGreaterThan(0);
+      expect(result.tools.some(t => t.name.includes('note'))).toBe(true);
+    });
+
+    it('should find tools by description keyword', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('backup');
+
+      expect(result.tools.some(t => t.name === 'create_backup')).toBe(true);
+    });
+
+    it('should match multiple keywords with AND logic', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('note content');
+
+      // All results should contain both keywords somewhere (name, description, or parameters)
+      expect(result.total_matches).toBeGreaterThan(0);
+
+      // These tools should match because they have both "note" and "content" in name/description/params
+      const matchedNames = result.tools.map(t => t.name);
+      expect(matchedNames).toContain('get_note_content');
+      expect(matchedNames).toContain('update_note_content');
+      expect(matchedNames).toContain('append_note_content');
+
+      // A search for keywords that don't ALL match should return fewer/no results
+      const noMatchResult = searchTools('xyz123nonexistent');
+      expect(noMatchResult.total_matches).toBe(0);
+    });
+
+    it('should be case insensitive', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result1 = searchTools('NOTE');
+      const result2 = searchTools('note');
+
+      expect(result1.total_matches).toBe(result2.total_matches);
+    });
+
+    it('should filter by category', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('get', { category: 'attributes' });
+
+      expect(result.tools.every(t => t.category === 'attributes')).toBe(true);
+    });
+
+    it('should respect limit parameter', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('note', { limit: 3 });
+
+      expect(result.returned).toBeLessThanOrEqual(3);
+      expect(result.tools.length).toBeLessThanOrEqual(3);
+    });
+
+    it('should include schemas when requested', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('create_note', { include_schemas: true });
+
+      const createNoteTool = result.tools.find(t => t.name === 'create_note');
+      expect(createNoteTool?.inputSchema).toBeDefined();
+    });
+
+    it('should not include schemas by default', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('create_note');
+
+      const createNoteTool = result.tools.find(t => t.name === 'create_note');
+      expect(createNoteTool?.inputSchema).toBeUndefined();
+    });
+
+    it('should sort by relevance score', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('note');
+
+      // Results should be sorted descending by score
+      for (let i = 1; i < result.tools.length; i++) {
+        expect(result.tools[i - 1].relevance_score).toBeGreaterThanOrEqual(
+          result.tools[i].relevance_score
+        );
+      }
+    });
+
+    it('should include matched_in array showing where matches occurred', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('create_note');
+
+      const createNoteTool = result.tools.find(t => t.name === 'create_note');
+      expect(createNoteTool?.matched_in).toContain('name');
+    });
+
+    it('should return empty results for non-matching query', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      const result = searchTools('xyznonexistent123');
+
+      expect(result.total_matches).toBe(0);
+      expect(result.tools).toHaveLength(0);
+    });
+
+    it('should match parameter names', async () => {
+      const { searchTools } = await import('../../src/tools/registry.js');
+      // "noteId" is a common parameter name
+      const result = searchTools('noteId');
+
+      expect(result.total_matches).toBeGreaterThan(0);
+      expect(result.tools.some(t => t.matched_in.some(m => m.includes('parameter')))).toBe(true);
+    });
+  });
+});
+
+describe('System Tools - search_tools', () => {
+  describe('registerSystemTools', () => {
+    it('should register 4 system tools including search_tools', () => {
+      const tools = registerSystemTools();
+      expect(tools).toHaveLength(4);
+      expect(tools.map((t) => t.name)).toContain('search_tools');
+    });
+
+    it('should have correct input schema for search_tools', () => {
+      const tools = registerSystemTools();
+      const searchTool = tools.find((t) => t.name === 'search_tools')!;
+
+      expect(searchTool.inputSchema.required).toEqual(['query']);
+      expect(searchTool.inputSchema.properties).toHaveProperty('query');
+      expect(searchTool.inputSchema.properties).toHaveProperty('category');
+      expect(searchTool.inputSchema.properties).toHaveProperty('include_schemas');
+      expect(searchTool.inputSchema.properties).toHaveProperty('limit');
+    });
+  });
+
+  describe('handleSystemTool - search_tools', () => {
+    let mockClient: TriliumClient;
+
+    beforeEach(() => {
+      mockClient = createMockClient();
+    });
+
+    it('should search tools by query', async () => {
+      const result = await handleSystemTool(mockClient, 'search_tools', {
+        query: 'note',
+      });
+
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!.content[0].text);
+      expect(parsed.query).toBe('note');
+      expect(parsed.total_matches).toBeGreaterThan(0);
+      expect(parsed.tools).toBeDefined();
+      expect(Array.isArray(parsed.tools)).toBe(true);
+    });
+
+    it('should filter by category', async () => {
+      const result = await handleSystemTool(mockClient, 'search_tools', {
+        query: 'get',
+        category: 'notes',
+      });
+
+      const parsed = JSON.parse(result!.content[0].text);
+      expect(parsed.category).toBe('notes');
+      expect(parsed.tools.every((t: any) => t.category === 'notes')).toBe(true);
+    });
+
+    it('should include schemas when requested', async () => {
+      const result = await handleSystemTool(mockClient, 'search_tools', {
+        query: 'create_note',
+        include_schemas: true,
+      });
+
+      const parsed = JSON.parse(result!.content[0].text);
+      const createNoteTool = parsed.tools.find((t: any) => t.name === 'create_note');
+      expect(createNoteTool?.inputSchema).toBeDefined();
+    });
+
+    it('should respect limit parameter', async () => {
+      const result = await handleSystemTool(mockClient, 'search_tools', {
+        query: 'note',
+        limit: 2,
+      });
+
+      const parsed = JSON.parse(result!.content[0].text);
+      expect(parsed.returned).toBeLessThanOrEqual(2);
+      expect(parsed.tools.length).toBeLessThanOrEqual(2);
+    });
+
+    it('should reject empty query', async () => {
+      await expect(
+        handleSystemTool(mockClient, 'search_tools', {
+          query: '',
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should reject invalid category', async () => {
+      await expect(
+        handleSystemTool(mockClient, 'search_tools', {
+          query: 'note',
+          category: 'invalid_category',
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should reject limit below 1', async () => {
+      await expect(
+        handleSystemTool(mockClient, 'search_tools', {
+          query: 'note',
+          limit: 0,
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should reject limit above 50', async () => {
+      await expect(
+        handleSystemTool(mockClient, 'search_tools', {
+          query: 'note',
+          limit: 51,
+        })
+      ).rejects.toThrow();
+    });
+  });
+});
+
 describe('Tool count verification', () => {
-  it('should have exactly 28 tools total', () => {
+  it('should have exactly 35 tools total (34 + search_tools)', () => {
     const allTools = [
       ...registerNoteTools(),
       ...registerSearchTools(),
@@ -2697,8 +3010,9 @@ describe('Tool count verification', () => {
       ...registerCalendarTools(),
       ...registerSystemTools(),
       ...registerAttachmentTools(),
+      ...registerRevisionTools(),
     ];
-    expect(allTools).toHaveLength(28);
+    expect(allTools).toHaveLength(35);
   });
 
   it('all tools should have descriptions', () => {
@@ -2710,6 +3024,7 @@ describe('Tool count verification', () => {
       ...registerCalendarTools(),
       ...registerSystemTools(),
       ...registerAttachmentTools(),
+      ...registerRevisionTools(),
     ];
     allTools.forEach((tool) => {
       expect(tool.description).toBeDefined();
@@ -2726,6 +3041,7 @@ describe('Tool count verification', () => {
       ...registerCalendarTools(),
       ...registerSystemTools(),
       ...registerAttachmentTools(),
+      ...registerRevisionTools(),
     ];
     allTools.forEach((tool) => {
       expect(tool.inputSchema).toBeDefined();
