@@ -1156,6 +1156,332 @@ describe('Note Tools', () => {
       });
     });
 
+    describe('image embedding', () => {
+      const mockImage = { data: 'base64data', mime: 'image/png', filename: 'photo.png' };
+
+      it('should create note with images and resolve placeholders', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'With Image' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'photo.png',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        const result = await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'With Image',
+          type: 'text',
+          content: '<p>Hello</p><img src="image:0">',
+          images: [mockImage],
+        });
+
+        expect(result).not.toBeNull();
+        expect(mockClient.createAttachment).toHaveBeenCalledWith({
+          ownerId: 'note123',
+          role: 'image',
+          mime: 'image/png',
+          title: 'photo.png',
+          content: 'base64data',
+        });
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>Hello</p><img src="api/attachments/att001/image/photo.png">'
+        );
+      });
+
+      it('should append unreferenced images at end of content', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'Test' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'photo.png',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'Test',
+          type: 'text',
+          content: '<p>No placeholders</p>',
+          images: [mockImage],
+        });
+
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>No placeholders</p>\n<p><img src="api/attachments/att001/image/photo.png"></p>'
+        );
+      });
+
+      it('should not call updateNoteContent when no images provided', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'Test' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+
+        await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'Test',
+          type: 'text',
+          content: '<p>No images</p>',
+        });
+
+        expect(mockClient.createAttachment).not.toHaveBeenCalled();
+        expect(mockClient.updateNoteContent).not.toHaveBeenCalled();
+      });
+
+      it('should create multiple images with correct placeholders', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'Multi' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+        vi.mocked(mockClient.createAttachment)
+          .mockResolvedValueOnce({ attachmentId: 'att001', title: 'a.png' } as any)
+          .mockResolvedValueOnce({ attachmentId: 'att002', title: 'b.jpg' } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'Multi',
+          type: 'text',
+          content: '<img src="image:0"><p>Text</p><img src="image:1">',
+          images: [
+            { data: 'img1data', mime: 'image/png', filename: 'a.png' },
+            { data: 'img2data', mime: 'image/jpeg', filename: 'b.jpg' },
+          ],
+        });
+
+        expect(mockClient.createAttachment).toHaveBeenCalledTimes(2);
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<img src="api/attachments/att001/image/a.png"><p>Text</p><img src="api/attachments/att002/image/b.jpg">'
+        );
+      });
+
+      it('should process images in update_note_content', async () => {
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'photo.png',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'update_note_content', {
+          noteId: 'note123',
+          content: '<p>New content</p><img src="image:0">',
+          images: [mockImage],
+        });
+
+        expect(mockClient.createAttachment).toHaveBeenCalledWith({
+          ownerId: 'note123',
+          role: 'image',
+          mime: 'image/png',
+          title: 'photo.png',
+          content: 'base64data',
+        });
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>New content</p><img src="api/attachments/att001/image/photo.png">'
+        );
+      });
+
+      it('should process images in append_note_content', async () => {
+        vi.mocked(mockClient.getNoteContent).mockResolvedValue('<p>Existing</p>');
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'photo.png',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'append_note_content', {
+          noteId: 'note123',
+          content: '<p>More content</p><img src="image:0">',
+          images: [mockImage],
+        });
+
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>Existing</p><p>More content</p><img src="api/attachments/att001/image/photo.png">'
+        );
+      });
+
+      it('should reject images with changes mode', async () => {
+        await expect(
+          handleNoteTool(mockClient, 'update_note_content', {
+            noteId: 'note123',
+            changes: [{ old_string: 'a', new_string: 'b' }],
+            images: [mockImage],
+          })
+        ).rejects.toThrow();
+      });
+
+      it('should reject images with patch mode', async () => {
+        await expect(
+          handleNoteTool(mockClient, 'update_note_content', {
+            noteId: 'note123',
+            patch: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
+            images: [mockImage],
+          })
+        ).rejects.toThrow();
+      });
+    });
+
+    describe('file embedding', () => {
+      const mockFile = { data: 'cGRmLWNvbnRlbnQ=', mime: 'application/pdf', filename: 'report.pdf' };
+
+      it('should create note with files and resolve placeholders', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'With File' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'report.pdf',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'With File',
+          type: 'text',
+          content: '<p>Download: <a href="file:0">Report</a></p>',
+          files: [mockFile],
+        });
+
+        expect(mockClient.createAttachment).toHaveBeenCalledWith({
+          ownerId: 'note123',
+          role: 'file',
+          mime: 'application/pdf',
+          title: 'report.pdf',
+          content: 'cGRmLWNvbnRlbnQ=',
+        });
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>Download: <a href="api/attachments/att001/download">Report</a></p>'
+        );
+      });
+
+      it('should append unreferenced files at end of content', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'Test' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'report.pdf',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'Test',
+          type: 'text',
+          content: '<p>No file placeholder</p>',
+          files: [mockFile],
+        });
+
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>No file placeholder</p>\n<p><a href="api/attachments/att001/download">report.pdf</a></p>'
+        );
+      });
+
+      it('should process both images and files in same note', async () => {
+        const mockResult = {
+          note: { noteId: 'note123', title: 'Mixed' },
+          branch: { branchId: 'branch123' },
+        };
+        vi.mocked(mockClient.createNote).mockResolvedValue(mockResult as any);
+        vi.mocked(mockClient.createAttachment)
+          .mockResolvedValueOnce({ attachmentId: 'img001', title: 'photo.png' } as any)
+          .mockResolvedValueOnce({ attachmentId: 'file001', title: 'report.pdf' } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'create_note', {
+          parentNoteId: 'root',
+          title: 'Mixed',
+          type: 'text',
+          content: '<img src="image:0"><a href="file:0">Report</a>',
+          images: [{ data: 'imgdata', mime: 'image/png', filename: 'photo.png' }],
+          files: [mockFile],
+        });
+
+        expect(mockClient.createAttachment).toHaveBeenCalledTimes(2);
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<img src="api/attachments/img001/image/photo.png"><a href="api/attachments/file001/download">Report</a>'
+        );
+      });
+
+      it('should process files in update_note_content', async () => {
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'data.csv',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'update_note_content', {
+          noteId: 'note123',
+          content: '<p>Updated: <a href="file:0">Data</a></p>',
+          files: [{ data: 'Y3N2ZGF0YQ==', mime: 'text/csv', filename: 'data.csv' }],
+        });
+
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>Updated: <a href="api/attachments/att001/download">Data</a></p>'
+        );
+      });
+
+      it('should process files in append_note_content', async () => {
+        vi.mocked(mockClient.getNoteContent).mockResolvedValue('<p>Existing</p>');
+        vi.mocked(mockClient.createAttachment).mockResolvedValue({
+          attachmentId: 'att001',
+          title: 'report.pdf',
+        } as any);
+        vi.mocked(mockClient.updateNoteContent).mockResolvedValue(undefined);
+
+        await handleNoteTool(mockClient, 'append_note_content', {
+          noteId: 'note123',
+          content: '<p>See: <a href="file:0">Report</a></p>',
+          files: [mockFile],
+        });
+
+        expect(mockClient.updateNoteContent).toHaveBeenCalledWith(
+          'note123',
+          '<p>Existing</p><p>See: <a href="api/attachments/att001/download">Report</a></p>'
+        );
+      });
+
+      it('should reject files with changes mode', async () => {
+        await expect(
+          handleNoteTool(mockClient, 'update_note_content', {
+            noteId: 'note123',
+            changes: [{ old_string: 'a', new_string: 'b' }],
+            files: [mockFile],
+          })
+        ).rejects.toThrow();
+      });
+
+      it('should reject files with patch mode', async () => {
+        await expect(
+          handleNoteTool(mockClient, 'append_note_content', {
+            noteId: 'note123',
+            patch: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
+            files: [mockFile],
+          })
+        ).rejects.toThrow();
+      });
+    });
+
     describe('delete_note', () => {
       it('should delete note by ID', async () => {
         vi.mocked(mockClient.deleteNote).mockResolvedValue(undefined);

@@ -16,6 +16,138 @@ import { isImageMimeType } from './attachments.js';
 import { searchReplaceBlockSchema, resolveContent, verifySearchReplaceResults } from './diff.js';
 
 /**
+ * Schema for an image to embed in a note.
+ */
+const imageEntrySchema = z.object({
+  data: z.string().describe('Base64-encoded image data'),
+  mime: z.string().describe('MIME type of the image (e.g., "image/png", "image/jpeg")'),
+  filename: z.string().describe('Filename for the image attachment (e.g., "screenshot.png")'),
+});
+
+const imagesFieldSchema = z.array(imageEntrySchema).optional().describe(
+  'Optional array of images to embed in the note. Each image has base64 data, MIME type, and filename. ' +
+  'Reference images in your content using placeholder URLs: in markdown use ![alt](image:0), ![alt](image:1), etc. ' +
+  'In HTML use <img src="image:0">. The number is the zero-based index into this array. ' +
+  'Images without a corresponding placeholder are appended at the end of the content.'
+);
+
+/**
+ * Create attachments for each image and replace placeholder references in HTML content.
+ * Placeholders use the format src="image:N" where N is the zero-based index.
+ * Images not referenced by a placeholder are appended at the end of the content.
+ */
+async function processImages(
+  client: TriliumClient,
+  ownerId: string,
+  htmlContent: string,
+  images: Array<{ data: string; mime: string; filename: string }>
+): Promise<string> {
+  // Create all attachments in parallel
+  const attachments = await Promise.all(
+    images.map((img) =>
+      client.createAttachment({
+        ownerId,
+        role: 'image',
+        mime: img.mime,
+        title: img.filename,
+        content: img.data,
+      })
+    )
+  );
+
+  // Replace placeholder references: src="image:N" -> real Trilium URL
+  let result = htmlContent;
+  const referencedIndices = new Set<number>();
+
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i];
+    const realSrc = `api/attachments/${att.attachmentId}/image/${att.title}`;
+    const placeholder = new RegExp(`src="image:${i}"`, 'g');
+    if (placeholder.test(result)) {
+      referencedIndices.add(i);
+      result = result.replace(placeholder, `src="${realSrc}"`);
+    }
+  }
+
+  // Append any images that were NOT referenced by a placeholder
+  for (let i = 0; i < attachments.length; i++) {
+    if (!referencedIndices.has(i)) {
+      const att = attachments[i];
+      const realSrc = `api/attachments/${att.attachmentId}/image/${att.title}`;
+      result += `\n<p><img src="${realSrc}"></p>`;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Schema for a file to embed in a note.
+ */
+const fileEntrySchema = z.object({
+  data: z.string().describe('Base64-encoded file data'),
+  mime: z.string().describe('MIME type of the file (e.g., "application/pdf", "text/csv")'),
+  filename: z.string().describe('Filename for the file attachment (e.g., "report.pdf")'),
+});
+
+const filesFieldSchema = z.array(fileEntrySchema).optional().describe(
+  'Optional array of files to attach and embed as download links in the note. Each file has base64 data, MIME type, and filename. ' +
+  'Reference files in your content using placeholder URLs: in markdown use [label](file:0), [label](file:1), etc. ' +
+  'In HTML use <a href="file:0">label</a>. The number is the zero-based index into this array. ' +
+  'Files without a corresponding placeholder are appended at the end of the content as download links.'
+);
+
+/**
+ * Create attachments for each file and replace placeholder references in HTML content.
+ * Placeholders use the format href="file:N" where N is the zero-based index.
+ * Files not referenced by a placeholder are appended at the end of the content as download links.
+ */
+async function processFiles(
+  client: TriliumClient,
+  ownerId: string,
+  htmlContent: string,
+  files: Array<{ data: string; mime: string; filename: string }>
+): Promise<string> {
+  // Create all attachments in parallel
+  const attachments = await Promise.all(
+    files.map((file) =>
+      client.createAttachment({
+        ownerId,
+        role: 'file',
+        mime: file.mime,
+        title: file.filename,
+        content: file.data,
+      })
+    )
+  );
+
+  // Replace placeholder references: href="file:N" -> real Trilium URL
+  let result = htmlContent;
+  const referencedIndices = new Set<number>();
+
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i];
+    const realHref = `api/attachments/${att.attachmentId}/download`;
+    const placeholder = new RegExp(`href="file:${i}"`, 'g');
+    if (placeholder.test(result)) {
+      referencedIndices.add(i);
+      result = result.replace(placeholder, `href="${realHref}"`);
+    }
+  }
+
+  // Append any files that were NOT referenced by a placeholder
+  for (let i = 0; i < attachments.length; i++) {
+    if (!referencedIndices.has(i)) {
+      const att = attachments[i];
+      const realHref = `api/attachments/${att.attachmentId}/download`;
+      result += `\n<p><a href="${realHref}">${att.title}</a></p>`;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Convert markdown content to HTML if format is 'markdown'.
  * Returns content unchanged if format is 'html' or undefined.
  */
@@ -93,6 +225,8 @@ const createNoteSchema = z.object({
   utcDateCreated: utcDateTimeSchema
     .optional()
     .describe('Set UTC creation date. Format: "2024-01-15 09:30:00.000Z"'),
+  images: imagesFieldSchema,
+  files: filesFieldSchema,
 });
 
 const getNoteSchema = z.object({
@@ -161,9 +295,11 @@ const updateNoteContentSchema = z
         'Content format for text notes. Use "markdown" to automatically convert markdown to HTML. ' +
           'Defaults to "html". Only applies to full content replacement mode.'
       ),
+    images: imagesFieldSchema,
+    files: filesFieldSchema,
   })
   .check((ctx) => {
-    const { content, changes, patch, format } = ctx.value;
+    const { content, changes, patch, format, images, files } = ctx.value;
     const modes = [content !== undefined, changes !== undefined, patch !== undefined].filter(
       Boolean
     ).length;
@@ -189,6 +325,24 @@ const updateNoteContentSchema = z
         message:
           'format="markdown" cannot be used with "changes" or "patch" modes — diffs operate on stored content (HTML)',
         path: ['format'],
+      });
+    }
+    if (images?.length && (changes !== undefined || patch !== undefined)) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message:
+          'images cannot be used with "changes" or "patch" modes — use "content" mode to embed images',
+        path: ['images'],
+      });
+    }
+    if (files?.length && (changes !== undefined || patch !== undefined)) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message:
+          'files cannot be used with "changes" or "patch" modes — use "content" mode to embed files',
+        path: ['files'],
       });
     }
   });
@@ -233,9 +387,11 @@ const appendNoteContentSchema = z
         'Content format for text notes. Use "markdown" to automatically convert markdown to HTML. ' +
           'Defaults to "html". Only applies to full content append mode.'
       ),
+    images: imagesFieldSchema,
+    files: filesFieldSchema,
   })
   .check((ctx) => {
-    const { content, changes, patch, format } = ctx.value;
+    const { content, changes, patch, format, images, files } = ctx.value;
     const modes = [content !== undefined, changes !== undefined, patch !== undefined].filter(
       Boolean
     ).length;
@@ -263,6 +419,24 @@ const appendNoteContentSchema = z
         path: ['format'],
       });
     }
+    if (images?.length && (changes !== undefined || patch !== undefined)) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message:
+          'images cannot be used with "changes" or "patch" modes — use "content" mode to embed images',
+        path: ['images'],
+      });
+    }
+    if (files?.length && (changes !== undefined || patch !== undefined)) {
+      ctx.issues.push({
+        code: 'custom',
+        input: ctx.value,
+        message:
+          'files cannot be used with "changes" or "patch" modes — use "content" mode to embed files',
+        path: ['files'],
+      });
+    }
   });
 
 const undeleteNoteSchema = z.object({
@@ -284,7 +458,8 @@ export function registerNoteTools(): Tool[] {
   return [
     defineTool(
       'create_note',
-      'Create a new note with title, content, type, and parent. Returns the created note and its branch. Supports positioning, tree display, and date options. For text notes, content can be HTML (default) or markdown (set format to "markdown").',
+      'Create a new note with title, content, type, and parent. Returns the created note and its branch. Supports positioning, tree display, and date options. For text notes, content can be HTML (default) or markdown (set format to "markdown"). ' +
+        'Supports embedding images and files: pass "images" and/or "files" arrays with base64 data, and reference them in content using image:0/file:0 placeholders (e.g., <img src="image:0"> or <a href="file:0">).',
       createNoteSchema
     ),
     defineTool(
@@ -309,7 +484,8 @@ export function registerNoteTools(): Tool[] {
       'Update the content/body of a note. Three modes: (1) Full replacement via "content" — provide HTML (default) or markdown (set format to "markdown"). ' +
         '(2) Search/replace via "changes" — array of {old_string, new_string} blocks applied sequentially to existing content. ' +
         '(3) Unified diff via "patch" — a unified diff string applied to existing content. ' +
-        'Exactly one mode must be used per call.',
+        'Exactly one mode must be used per call. ' +
+        'In "content" mode, supports embedding images and files via the "images" and "files" arrays with image:0/file:0 placeholders.',
       updateNoteContentSchema
     ),
     defineTool(
@@ -317,7 +493,8 @@ export function registerNoteTools(): Tool[] {
       'Append or edit content of an existing note. Three modes: (1) Append via "content" — fetches current content and appends new content at the end. ' +
         '(2) Search/replace via "changes" — array of {old_string, new_string} blocks applied sequentially to existing content. ' +
         '(3) Unified diff via "patch" — a unified diff string applied to existing content. ' +
-        'Exactly one mode must be used per call.',
+        'Exactly one mode must be used per call. ' +
+        'In "content" mode, supports embedding images and files via the "images" and "files" arrays with image:0/file:0 placeholders.',
       appendNoteContentSchema
     ),
     defineTool(
@@ -353,7 +530,7 @@ export async function handleNoteTool(
   switch (name) {
     case 'create_note': {
       const parsed = createNoteSchema.parse(args);
-      const content = await convertContent(parsed.content, parsed.format);
+      let content = await convertContent(parsed.content, parsed.format);
       const result = await client.createNote({
         parentNoteId: parsed.parentNoteId,
         title: parsed.title,
@@ -368,6 +545,18 @@ export async function handleNoteTool(
         dateCreated: parsed.dateCreated,
         utcDateCreated: parsed.utcDateCreated,
       });
+
+      // If images or files provided, create attachments and update content with resolved references
+      if ((parsed.images && parsed.images.length > 0) || (parsed.files && parsed.files.length > 0)) {
+        if (parsed.images && parsed.images.length > 0) {
+          content = await processImages(client, result.note.noteId, content, parsed.images);
+        }
+        if (parsed.files && parsed.files.length > 0) {
+          content = await processFiles(client, result.note.noteId, content, parsed.files);
+        }
+        await client.updateNoteContent(result.note.noteId, content);
+      }
+
       return {
         content: [{ type: 'text', text: `Note created successfully. noteId: ${result.note.noteId}, branchId: ${result.branch.branchId}, title: ${result.note.title}` }],
       };
@@ -469,6 +658,15 @@ export async function handleNoteTool(
           content: parsed.content,
         }, parsed.format === 'markdown' ? (c) => convertContent(c, 'markdown') : undefined);
       }
+
+      // Process images/files if provided (only valid in content mode, enforced by schema validation)
+      if (parsed.images && parsed.images.length > 0) {
+        finalContent = await processImages(client, parsed.noteId, finalContent, parsed.images);
+      }
+      if (parsed.files && parsed.files.length > 0) {
+        finalContent = await processFiles(client, parsed.noteId, finalContent, parsed.files);
+      }
+
       await client.updateNoteContent(parsed.noteId, finalContent);
 
       // Verify search/replace changes were actually persisted
@@ -497,6 +695,15 @@ export async function handleNoteTool(
         const newContent = await convertContent(parsed.content ?? '', parsed.format);
         finalContent = existingContent + newContent;
       }
+
+      // Process images/files if provided (only valid in content mode, enforced by schema validation)
+      if (parsed.images && parsed.images.length > 0) {
+        finalContent = await processImages(client, parsed.noteId, finalContent, parsed.images);
+      }
+      if (parsed.files && parsed.files.length > 0) {
+        finalContent = await processFiles(client, parsed.noteId, finalContent, parsed.files);
+      }
+
       await client.updateNoteContent(parsed.noteId, finalContent);
 
       // Verify search/replace changes were actually persisted

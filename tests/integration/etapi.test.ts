@@ -1172,4 +1172,396 @@ This has <angle brackets> and "quotes" & ampersands.
       expect(content).toBe('');
     });
   });
+
+  describe('Image Embedding via handleNoteTool', () => {
+    // A minimal 1x1 PNG pixel encoded as base64
+    const pngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+    it('create_note with images - should create note, create attachment, and resolve placeholders', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Note With Embedded Image',
+        type: 'text',
+        content: '<p>Here is an image:</p><img src="image:0">',
+        images: [{ data: pngBase64, mime: 'image/png', filename: 'pixel.png' }],
+      });
+
+      expect(result).not.toBeNull();
+      const text = result!.content[0].text;
+      expect(text).toContain('Note created successfully');
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      // Verify the content has resolved attachment URL (not placeholder)
+      const content = await client.getNoteContent(noteId);
+      expect(content).not.toContain('image:0');
+      expect(content).toContain('api/attachments/');
+      expect(content).toContain('/image/pixel.png');
+      expect(content).toContain('<p>Here is an image:</p>');
+
+      // Verify the attachment was created
+      const attachments = await client.getNoteAttachments(noteId);
+      expect(attachments.length).toBe(1);
+      expect(attachments[0].role).toBe('image');
+      expect(attachments[0].mime).toBe('image/png');
+      expect(attachments[0].title).toBe('pixel.png');
+    });
+
+    it('create_note with images - unreferenced images should be appended', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Note With Appended Image',
+        type: 'text',
+        content: '<p>No placeholder here</p>',
+        images: [{ data: pngBase64, mime: 'image/png', filename: 'appended.png' }],
+      });
+
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).toContain('<p>No placeholder here</p>');
+      expect(content).toContain('api/attachments/');
+      expect(content).toContain('/image/appended.png');
+    });
+
+    it('create_note with images - multiple images with placeholders', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Note With Multiple Images',
+        type: 'text',
+        content: '<img src="image:0"><p>Between</p><img src="image:1">',
+        images: [
+          { data: pngBase64, mime: 'image/png', filename: 'first.png' },
+          { data: pngBase64, mime: 'image/jpeg', filename: 'second.jpg' },
+        ],
+      });
+
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).not.toContain('image:0');
+      expect(content).not.toContain('image:1');
+      expect(content).toContain('/image/first.png');
+      expect(content).toContain('/image/second.jpg');
+      expect(content).toContain('<p>Between</p>');
+
+      const attachments = await client.getNoteAttachments(noteId);
+      expect(attachments.length).toBe(2);
+    });
+
+    it('create_note with markdown and images - should convert markdown then resolve placeholders', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Markdown With Image',
+        type: 'text',
+        content: '# Hello\n\n![my photo](image:0)\n\nSome text.',
+        format: 'markdown',
+        images: [{ data: pngBase64, mime: 'image/png', filename: 'photo.png' }],
+      });
+
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).toContain('<h1>Hello</h1>');
+      expect(content).not.toContain('image:0');
+      expect(content).toContain('api/attachments/');
+      expect(content).toContain('/image/photo.png');
+    });
+
+    it('create_note without images - should not create attachments (backward compat)', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'No Images Note',
+        type: 'text',
+        content: '<p>Just text</p>',
+      });
+
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).toBe('<p>Just text</p>');
+
+      const attachments = await client.getNoteAttachments(noteId);
+      expect(attachments.length).toBe(0);
+    });
+
+    it('update_note_content with images - should create attachment and resolve placeholders', async () => {
+      // Create note first
+      const createResult = await client.createNote({
+        parentNoteId: 'root',
+        title: 'Note for Image Update',
+        type: 'text',
+        content: '<p>Initial content</p>',
+      });
+      const noteId = createResult.note.noteId;
+
+      await handleNoteTool(client, 'update_note_content', {
+        noteId,
+        content: '<p>Updated with image</p><img src="image:0">',
+        images: [{ data: pngBase64, mime: 'image/png', filename: 'updated.png' }],
+      });
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).not.toContain('image:0');
+      expect(content).toContain('api/attachments/');
+      expect(content).toContain('/image/updated.png');
+      expect(content).toContain('<p>Updated with image</p>');
+    });
+
+    it('append_note_content with images - should append content and create attachment', async () => {
+      const createResult = await client.createNote({
+        parentNoteId: 'root',
+        title: 'Note for Image Append',
+        type: 'text',
+        content: '<p>Original content</p>',
+      });
+      const noteId = createResult.note.noteId;
+
+      await handleNoteTool(client, 'append_note_content', {
+        noteId,
+        content: '<p>Appended section</p><img src="image:0">',
+        images: [{ data: pngBase64, mime: 'image/png', filename: 'appended.png' }],
+      });
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).toContain('<p>Original content</p>');
+      expect(content).toContain('<p>Appended section</p>');
+      expect(content).not.toContain('image:0');
+      expect(content).toContain('api/attachments/');
+      expect(content).toContain('/image/appended.png');
+    });
+  });
+
+  describe('File Embedding via handleNoteTool', () => {
+    const fakeFileBase64 = btoa('Hello, this is a test file!');
+
+    it('create_note with files - should create note, create file attachment, and resolve placeholders', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Note With Embedded File',
+        type: 'text',
+        content: '<p>Download: <a href="file:0">Report</a></p>',
+        files: [{ data: fakeFileBase64, mime: 'application/pdf', filename: 'report.pdf' }],
+      });
+
+      expect(result).not.toBeNull();
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      // Verify the content has resolved attachment URL (not placeholder)
+      const content = await client.getNoteContent(noteId);
+      expect(content).not.toContain('file:0');
+      expect(content).toContain('api/attachments/');
+      expect(content).toContain('/download');
+      expect(content).toContain('>Report</a>');
+
+      // Verify the attachment was created with role "file"
+      const attachments = await client.getNoteAttachments(noteId);
+      expect(attachments.length).toBe(1);
+      expect(attachments[0].role).toBe('file');
+      expect(attachments[0].mime).toBe('application/pdf');
+      expect(attachments[0].title).toBe('report.pdf');
+    });
+
+    it('create_note with files - unreferenced files should be appended as download links', async () => {
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Note With Appended File',
+        type: 'text',
+        content: '<p>No file placeholder here</p>',
+        files: [{ data: fakeFileBase64, mime: 'text/csv', filename: 'data.csv' }],
+      });
+
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).toContain('<p>No file placeholder here</p>');
+      expect(content).toContain('/download');
+      expect(content).toContain('>data.csv</a>');
+    });
+
+    it('create_note with both images and files', async () => {
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+      const result = await handleNoteTool(client, 'create_note', {
+        parentNoteId: 'root',
+        title: 'Note With Image and File',
+        type: 'text',
+        content: '<img src="image:0"><p>And a file: <a href="file:0">Download</a></p>',
+        images: [{ data: pngBase64, mime: 'image/png', filename: 'photo.png' }],
+        files: [{ data: fakeFileBase64, mime: 'application/pdf', filename: 'doc.pdf' }],
+      });
+
+      const text = result!.content[0].text;
+      const noteId = text.match(/noteId: (\S+),/)![1];
+
+      const content = await client.getNoteContent(noteId);
+      expect(content).not.toContain('image:0');
+      expect(content).not.toContain('file:0');
+      expect(content).toContain('/image/photo.png');
+      expect(content).toContain('/download');
+      expect(content).toContain('>Download</a>');
+
+      const attachments = await client.getNoteAttachments(noteId);
+      expect(attachments.length).toBe(2);
+      expect(attachments.some((a) => a.role === 'image')).toBe(true);
+      expect(attachments.some((a) => a.role === 'file')).toBe(true);
+    });
+
+    it('update_note_content with files - should create file attachment and resolve placeholders', async () => {
+      const createResult = await client.createNote({
+        parentNoteId: 'root',
+        title: 'Note for File Update',
+        type: 'text',
+        content: '<p>Initial content</p>',
+      });
+
+      await handleNoteTool(client, 'update_note_content', {
+        noteId: createResult.note.noteId,
+        content: '<p>Updated with file: <a href="file:0">Data</a></p>',
+        files: [{ data: fakeFileBase64, mime: 'text/csv', filename: 'data.csv' }],
+      });
+
+      const content = await client.getNoteContent(createResult.note.noteId);
+      expect(content).not.toContain('file:0');
+      expect(content).toContain('/download');
+      expect(content).toContain('>Data</a>');
+    });
+
+    it('append_note_content with files - should append and create file attachment', async () => {
+      const createResult = await client.createNote({
+        parentNoteId: 'root',
+        title: 'Note for File Append',
+        type: 'text',
+        content: '<p>Original content</p>',
+      });
+
+      await handleNoteTool(client, 'append_note_content', {
+        noteId: createResult.note.noteId,
+        content: '<p>Appended: <a href="file:0">Attachment</a></p>',
+        files: [{ data: fakeFileBase64, mime: 'application/pdf', filename: 'attachment.pdf' }],
+      });
+
+      const content = await client.getNoteContent(createResult.note.noteId);
+      expect(content).toContain('<p>Original content</p>');
+      expect(content).toContain('/download');
+      expect(content).toContain('>Attachment</a>');
+    });
+  });
+
+  describe('Attachment Inline Viewing and Download', () => {
+    let testNoteId: string;
+
+    beforeAll(async () => {
+      const result = await client.createNote({
+        parentNoteId: 'root',
+        title: 'Attachment Access Test Note',
+        type: 'text',
+        content: '<p>Testing attachment access</p>',
+      });
+      testNoteId = result.note.noteId;
+    });
+
+    it('image attachment should be accessible via /image/{title} endpoint', async () => {
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const attachment = await client.createAttachment({
+        ownerId: testNoteId,
+        role: 'image',
+        mime: 'image/png',
+        title: 'test-image.png',
+        content: pngBase64,
+      });
+
+      // Access via /image/{title} (the URL format used in note HTML)
+      const baseUrl = (client as any).baseUrl.replace('/etapi', '');
+      const resp = await fetch(
+        `${baseUrl}/api/attachments/${attachment.attachmentId}/image/test-image.png`
+      );
+      expect(resp.status).toBe(200);
+      expect(resp.headers.get('content-type')).toBe('image/png');
+    });
+
+    it('image attachment should be accessible via /open endpoint for inline viewing', async () => {
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const attachment = await client.createAttachment({
+        ownerId: testNoteId,
+        role: 'image',
+        mime: 'image/png',
+        title: 'inline-image.png',
+        content: pngBase64,
+      });
+
+      const baseUrl = (client as any).baseUrl.replace('/etapi', '');
+      const resp = await fetch(
+        `${baseUrl}/api/attachments/${attachment.attachmentId}/open`
+      );
+      expect(resp.status).toBe(200);
+      expect(resp.headers.get('content-type')).toBe('image/png');
+    });
+
+    it('file attachment should be accessible via /open endpoint for inline viewing', async () => {
+      const fileContent = btoa('Test file content for inline viewing');
+      const attachment = await client.createAttachment({
+        ownerId: testNoteId,
+        role: 'file',
+        mime: 'application/pdf',
+        title: 'inline-doc.pdf',
+        content: fileContent,
+      });
+
+      const baseUrl = (client as any).baseUrl.replace('/etapi', '');
+      const resp = await fetch(
+        `${baseUrl}/api/attachments/${attachment.attachmentId}/open`
+      );
+      expect(resp.status).toBe(200);
+      expect(resp.headers.get('content-type')).toBe('application/pdf');
+    });
+
+    it('file attachment should be downloadable via /download endpoint', async () => {
+      const fileContent = btoa('Downloadable file content');
+      const attachment = await client.createAttachment({
+        ownerId: testNoteId,
+        role: 'file',
+        mime: 'application/pdf',
+        title: 'download-doc.pdf',
+        content: fileContent,
+      });
+
+      const baseUrl = (client as any).baseUrl.replace('/etapi', '');
+      const resp = await fetch(
+        `${baseUrl}/api/attachments/${attachment.attachmentId}/download`
+      );
+      expect(resp.status).toBe(200);
+      expect(resp.headers.get('content-type')).toBe('application/pdf');
+      const contentDisposition = resp.headers.get('content-disposition') || '';
+      expect(contentDisposition).toContain('file');
+      expect(contentDisposition).toContain('download-doc.pdf');
+    });
+
+    it('file attachment /image/ endpoint should return error (not an image)', async () => {
+      const fileContent = btoa('Not an image');
+      const attachment = await client.createAttachment({
+        ownerId: testNoteId,
+        role: 'file',
+        mime: 'application/pdf',
+        title: 'not-image.pdf',
+        content: fileContent,
+      });
+
+      const baseUrl = (client as any).baseUrl.replace('/etapi', '');
+      const resp = await fetch(
+        `${baseUrl}/api/attachments/${attachment.attachmentId}/image/not-image.pdf`
+      );
+      // Should not be 200 (file is not an image)
+      expect(resp.status).not.toBe(200);
+    });
+  });
 });
